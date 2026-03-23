@@ -1,3 +1,18 @@
+1. 原始阶段：CSV 数据
+输入：data/smiles.csv（包含阳离子 SMILES、阴离子 SMILES、温度 T、压力 P、CO2 溶解度）。
+形态：此时数据是化学字符串和数值
+
+
+
+
+
+
+
+
+
+
+
+
 import numpy as np
 import torch
 from torch_geometric.data import Batch, Data, Dataset, DataLoader
@@ -27,6 +42,10 @@ def combine_Graph(Graph_list):
 
     return combined_Graph
 
+
+
+
+这个虚节点就像一个“班长”，它能同时收集阴离子和阳离子的信息。在 GNN 传播时，信息可以从阳离子 -> 虚节点 -> 阴离子流动，解决了阴阳离子互不连通导致信息无法交换的问题。
 def add_global(graph):
     """
     add a global point, all the attribute are set to zero
@@ -128,6 +147,18 @@ class IL_set(torch.utils.data.Dataset):
 
 每一个样本返回给 DataLoader 的是一个元组：(Combine_Graph, condition, label)。
         return Combine_Graph,condition,label
+
+
+
+
+
+
+
+
+
+数据的“化身”：mol2graph(self, mol) (特征提取函数)
+
+这个函数负责把 npy 里的数组变成 PyTorch Geometric (PyG) 的 Data 对象。 将离子的化学性质转为节点特征向量（原子描述符）
 
     def mol2graph(self,mol):
         x = torch.tensor(mol[0],dtype=torch.long)

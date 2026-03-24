@@ -54,14 +54,7 @@ args = {
 
 
 def combine_Graph(Graph_list):
-    """
-    merge a Graph with multiple subgraph
-    Args:
-        Graph_list: list() of torch_geometric.data.Data object
 
-    Returns: torch_geometric.data.Data object
-
-    """
     x = Batch.from_data_list(Graph_list).x
     edge_index = Batch.from_data_list(Graph_list).edge_index
     edge_attr = Batch.from_data_list(Graph_list).edge_attr
@@ -70,16 +63,7 @@ def combine_Graph(Graph_list):
 
     return combined_Graph
 
-
-
-
-
 def add_global(graph):
-    """
-    add a global point, all the attribute are set to zero
-    :param graph: pyg.data
-    :return: pyg.data
-    """
     node = torch.tensor([0,0,0,0,0]).reshape(1, -1)
     # node.shape
     x = torch.cat([graph.x, node], dim=0)
@@ -125,7 +109,6 @@ class IL_set(torch.utils.data.Dataset):
         # label.npy: 包含对应的 CO2 吸附量。
         self.label = np.load(label_path,allow_pickle=True)
         self.length = self.label.shape[0]
-
         # show basic information
         print("----info----")
         print("data_length",self.length)
@@ -192,10 +175,8 @@ class IL_set(torch.utils.data.Dataset):
         x = torch.tensor(mol[0],dtype=torch.long)
         edge_index = torch.tensor(mol[1],dtype=torch.long)
         edge_attr = torch.tensor(mol[2],dtype=torch.long)
-
         # debug
         # print("mol",x.shape,edge_index.shape,edge_attr.shape)
-
         Graph = Data(x=x, edge_index=edge_index, edge_attr=edge_attr)
         return Graph
 

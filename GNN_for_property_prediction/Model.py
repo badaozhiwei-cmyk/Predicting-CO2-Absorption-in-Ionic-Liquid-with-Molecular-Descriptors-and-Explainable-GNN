@@ -63,6 +63,8 @@ class IL_Net_GCN(torch.nn.Module):
 
     def forward(self, data_i, cond):
         x, edge_index = data_i.x.to(torch.float), data_i.edge_index
+       
+        edge_weight（将边缘属性求和降维后作为边权重），参与图卷积的信息聚合。
         edge_weight = torch.sum(data_i.edge_attr,dim=1).to(torch.float)
 
         x = self.l1(x, edge_index,edge_weight )
@@ -80,9 +82,10 @@ class IL_Net_GCN(torch.nn.Module):
         x = self.l4(x, edge_index,edge_weight )
         x = self.act(x)
         x = self.dropout(x)
-
+全局信息读取 (Readout)： 卷积完成后，不使用传统的全局池化层（如平均池化或最大池化），而是调用自定义的 extract 函数。该函数通过统计批量（batch）中每个图的节点数量，直接索引出每个图的最后一个节点（即 x[j - 1]）。对应上游数据处理逻辑，该节点即为连接全图所有原子的虚拟全局节点。
         x = self.extract(x,data_i.batch)
 
+溶解度预测： 获取到 512 维的全局节点特征后，使用 torch.cat 将其与 2 维的实验条件特征 cond（温度和压力）在维度 1 上拼接，形成 514 维的向量。最终通过由多个全连接层、批归一化（BatchNorm1d）和 ReLU 组成的 MLP (self.l5) 输出标量预测值。
         x = torch.cat([x, cond], dim=1)
         x = self.l5(x)
 
@@ -118,6 +121,7 @@ class IL_GAT(torch.nn.Module):
         self.dropout = nn.Dropout(p=args['dropout_rate'])
 
     def extract(self,x,batch):
+注意力权重返回：return_attention_weights=True。这使得网络在输出节点特征的同时，也会输出边索引及其对应的注意力权重分布（即代码中的 edge 和 attention 元组）。这些权重数据为后续构建论文中的“IL Explainer”提供了原始依据。        
         output, count= torch.unique(batch, return_counts=True)
         count = count.tolist()
 
@@ -134,6 +138,14 @@ class IL_GAT(torch.nn.Module):
 
         return g
 
+
+
+
+
+将 32 个独立的离散小图在对角线上平铺拼接成一个互不连通的大图：
+节点特征 x： 32 个图的节点特征在第 0 维拼接。
+边索引 edge_index： 后续图的边索引会加上前面图中节点的总数偏移量，然后拼接。
+批次索引 batch： PyG 会自动生成一个一维张量 batch（例如 [0, 0, 0, 1, 1, ..., 31]），用于记录大图中的每个节点原本属于哪一个小图。
     def forward(self, data_i, cond):
         x, edge_index = data_i.x.to(torch.float), data_i.edge_index
 
@@ -161,29 +173,52 @@ class IL_GAT(torch.nn.Module):
         return x
 
 
+
+
+
+
+
+
+
+
+Data(
+    x=[num_nodes, 5], 
+    edge_index=[2, num_edges], 
+    edge_attr=[num_edges, 3], 
+    y=[1],  # 目标值：CO2 溶解度
+    cond=[1, 2] # 实验条件：温度和压力
+)
+
+
 # GIN
 class GINEConv(MessagePassing):
     def __init__(self, emb_dim):
+        #super().__init__()
         super(GINEConv, self).__init__()
         self.mlp = nn.Sequential(
             nn.Linear(emb_dim, 2*emb_dim),
             nn.ReLU(),
             nn.Linear(2*emb_dim, emb_dim)
         )
+分别用于处理化学键的三种离散属性：键类型（bond type）、是否在环中（isInRing）、是否是芳香键（isAromatic）
         self.edge_embedding1 = nn.Embedding(num_bond_type, emb_dim)
         self.edge_embedding2 = nn.Embedding(num_bond_isInRing, emb_dim)
         self.edge_embedding3 = nn.Embedding(num_bond_isAromatic, emb_dim)
-
+用 Xavier 均匀分布进行初始化浮点向量
         nn.init.xavier_uniform_(self.edge_embedding1.weight.data)
         nn.init.xavier_uniform_(self.edge_embedding2.weight.data)
         nn.init.xavier_uniform_(self.edge_embedding3.weight.data)
 
+
+节点特征 x、边索引 edge_index 和边特征 edge_attribute
     def forward(self, x, edge_index, edge_attr):
-        # add self loops in the edge space
+       
+ 添加自环 (Add Self-loops)： 代码调用 add_self_loops 为图中的每个节点添加一条指向自身的边。这使得节点在聚合邻居信息时，也能将自己上一层的特征包含进来       
         edge_index = add_self_loops(edge_index, num_nodes=x.size(0))[0]
 
         # add features corresponding to self-loop edges.
         self_loop_attr = torch.zeros(x.size(0), 3)
+        处理自环的边特征： 因为新增了自环边，原本的 edge_attr 数量不够了。代码通过 torch.zeros 创建了对应数量的自环边特征，并将其赋值为特定的索引（如 num_bond_type - 1），然后拼接（torch.cat）到原始的边特征矩阵中。
         self_loop_attr[:, 0] = num_bond_type - 1 # bond type for self-loop edge
         self_loop_attr[:, 1] = num_bond_isInRing - 1  # bond type for self-loop edge
         self_loop_attr[:, 2] = num_bond_isAromatic - 1  # bond type for self-loop edge
@@ -194,12 +229,13 @@ class GINEConv(MessagePassing):
         edge_embeddings = self.edge_embedding1(edge_attr[:,0]) + \
                           self.edge_embedding2(edge_attr[:,1]) + \
                           self.edge_embedding3(edge_attr[:,2])
-
+触发消息传递
         return self.propagate(edge_index, x=x, edge_attr=edge_embeddings)
 
+message 函数来定义邻居节点传过来的“信息”是什么。
     def message(self, x_j, edge_attr):
         return x_j + edge_attr
-
+aggr_out 是目标节点收集到的所有邻居消息的聚合结果。
     def update(self, aggr_out):
         return self.mlp(aggr_out)
 
@@ -211,6 +247,16 @@ class GIN(nn.Module):
         self.feat_dim = args['feat_dim']
         self.drop_ratio = args['drop_ratio']
         pool = args['pool']
+
+2. 节点张量 (x)
+在 GIN 模型中，节点特征需要通过 nn.Embedding 层，因此输入的节点张量 x 存储的是整数类别的索引。对象类型： torch.Tensor (通常数据类型为 torch.long 或 int64)张量维度： [num_nodes, 5]
+num_nodes 表示该离子液体对中总原子数（阳离子原子数 + 阴离子原子数 + 1个全局节点）。
+5 对应我们在 Model.py 中看到的 5 个离散属性的索引：
+原子类型（如 C, N, O）
+杂化轨道类型（如 SP2, SP3）
+是否芳香族
+节点度数（连接的边数）
+形式电荷      
 
         self.x_embedding1 = nn.Embedding(num_atom_type, self.emb_dim)
         self.x_embedding2 = nn.Embedding(num_Hbrid, self.emb_dim)

@@ -21,6 +21,7 @@ class IL_Net_GCN(torch.nn.Module):
     def __init__(self, args):
         super(IL_Net_GCN,self).__init__()
         self.args = args
+        args 字典通过键值索引
         n_features = self.args['n_features']
         self.l1 = GCNConv(n_features, 512, normalize = True)
         self.l2 = GCNConv(512, 1024, normalize=True)
@@ -45,18 +46,36 @@ class IL_Net_GCN(torch.nn.Module):
         self.dropout = nn.Dropout(p=args['dropout_rate'])
 
     def extract(self,x,batch):
+batch 是一维张量，记录了每个节点属于哪个图（例：[0, 0, 0, 1, 1, 2, 2, 2, 2]）。
+torch.unique 统计出 batch 中每个独立图的节点总数，存入 count（例：图0有3个节点，图1有2个节点，图2有4个节点，count 为 [3, 2, 4]）。  
+        
         output, count= torch.unique(batch, return_counts=True)
         count = count.tolist()
-
+累加计算终止索引（for i in count: 循环）
+l 列表用于存储大图中每个独立图的切片终止位置。
+根据上述例子，循环结束后 l 的值为 [3, 5, 9]。这意味着图0的节点索引范围是 0~2，图1是 3~4，图2是 5~8。
         l = []
         cur = 0
         for i in count:
             cur += i
             l.append(cur)
+
+
+
+提取尾部节点（for j in l: 循环）
+j 代表当前图在整个大图中的累加总长度。
+j - 1 正好计算出当前图的最后一个节点在大图 x 中的绝对索引（例：索引 2、4、8）。
+x[j - 1] 提取该节点（即全局节点）的特征向量。
+.reshape(1, -1) 确保提取出的一维向量保持二维矩阵形状 [1, n_features]，以便后续拼接。
         re = []
         for j in l:
+            [1, n_features]进行append在0维度
             re.append(x[j - 1].reshape(1,-1))
 
+
+
+拼接输出,将提取出的所有全局节点特征按行拼接。
+输出张量 g 的最终维度为 [batch_size, n_features]，作为表示各个分子图整体结构的特征向量，送入下游 MLP 层进行溶解度回归预测。
         g = torch.cat(re,dim = 0)
 
         return g
@@ -142,10 +161,7 @@ class IL_GAT(torch.nn.Module):
 
 
 
-将 32 个独立的离散小图在对角线上平铺拼接成一个互不连通的大图：
-节点特征 x： 32 个图的节点特征在第 0 维拼接。
-边索引 edge_index： 后续图的边索引会加上前面图中节点的总数偏移量，然后拼接。
-批次索引 batch： PyG 会自动生成一个一维张量 batch（例如 [0, 0, 0, 1, 1, ..., 31]），用于记录大图中的每个节点原本属于哪一个小图。
+
     def forward(self, data_i, cond):
         x, edge_index = data_i.x.to(torch.float), data_i.edge_index
 

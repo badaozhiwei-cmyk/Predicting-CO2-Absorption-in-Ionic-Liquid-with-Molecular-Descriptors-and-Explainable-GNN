@@ -190,6 +190,34 @@ Data(
 )
 
 
+
+经过 DataLoader 组合后，输出的对象在 PyG 中具体称为 torch_geometric.data.Batch（它是 Data 类的子类）。假设你在 DataLoader 中设定的 batch_size = B
+Batch(
+    x=[num_nodes_total, 5],            # B 个图的节点数总和。
+    edge_index=[2, num_edges_total],   # B 个图的边数总和（内部索引已自动加上偏移量）。
+    edge_attr=[num_edges_total, 3],    # B 个图的边特征总和。
+    y=[B, 1],                          # B 个图的 CO2 溶解度目标值堆叠。
+    cond=[B, 2],                       # B 个图的温度和压力条件堆叠。
+    batch=[num_nodes_total],           # 长度为 num_nodes_total 的一维归属标识向量。
+    ptr=[B + 1]                        # PyG 自动生成的切片指针，记录每个图在合并大图中的起始和终止索引。
+)
+
+
+
+
+在 PyTorch Geometric 的底层机制中，这三个核心属性在传播时各司其职，共同完成“消息传递（Message Passing）”：
+
+edge_index（连接索引）：充当“路由表”
+它决定了信息应该如何流动。网络会根据 edge_index 指定的起点和终点，告诉底层计算图“把节点 A 的特征传递给节点 B”。
+
+x（节点特征）：充当“流动的数据实体”
+它是真正被传递和更新的数值。沿着 edge_index 铺设的路径，源节点的特征向量会被发送到目标节点。
+
+edge_attr（边特征）：充当“途径处理站”
+当源节点 x_i 的特征流向目标节点 x_j 时，它们之间这根连线本身的特征 edge_attr 会参与计算。例如，在代码中，消息传递的公式是源节点特征与边特征直接相加（x_j + edge_attr）。
+
+
+
 # GIN
 class GINEConv(MessagePassing):
     def __init__(self, emb_dim):
@@ -213,19 +241,25 @@ class GINEConv(MessagePassing):
 节点特征 x、边索引 edge_index 和边特征 edge_attribute
     def forward(self, x, edge_index, edge_attr):
        
- 添加自环 (Add Self-loops)： 代码调用 add_self_loops 为图中的每个节点添加一条指向自身的边。这使得节点在聚合邻居信息时，也能将自己上一层的特征包含进来       
+        添加自环 (Add Self-loops)# 目的：在消息传递 (propagate) 时，强制节点聚合自身上一层的特征，防止固有属性被邻居节点覆盖。     
         edge_index = add_self_loops(edge_index, num_nodes=x.size(0))[0]
-
-        # add features corresponding to self-loop edges.
+     
+        # 为新增的 x.size(0) 条自环边生成特征矩阵，特征维度为3（对应键类型、是否在环、是否芳香键）。
         self_loop_attr = torch.zeros(x.size(0), 3)
-        处理自环的边特征： 因为新增了自环边，原本的 edge_attr 数量不够了。代码通过 torch.zeros 创建了对应数量的自环边特征，并将其赋值为特定的索引（如 num_bond_type - 1），然后拼接（torch.cat）到原始的边特征矩阵中。
-        self_loop_attr[:, 0] = num_bond_type - 1 # bond type for self-loop edge
-        self_loop_attr[:, 1] = num_bond_isInRing - 1  # bond type for self-loop edge
-        self_loop_attr[:, 2] = num_bond_isAromatic - 1  # bond type for self-loop edge
+
+        # 3. 分配专属隔离索引 (避免特征混淆)
+        # 目的：自环是人为添加的虚拟边，为了防止其与真实化学键共享嵌入权重，
+        # 强制为其分配每种离散属性的最大索引值 (类别总数 - 1)。
+        # 结果：当自环边通过共享的 nn.Embedding 层时，将固定提取权重矩阵的最后一行，实现参数隔离更新
+        self_loop_attr[:, 0] = num_bond_type - 1
+        self_loop_attr[:, 1] = num_bond_isInRing - 1  
+        self_loop_attr[:, 2] = num_bond_isAromatic - 1  
 
         self_loop_attr = self_loop_attr.to(edge_attr.device).to(edge_attr.dtype)
+         # 将构造好的自环边特征矩阵拼接到真实化学键特征矩阵的最下方。
         edge_attr = torch.cat((edge_attr, self_loop_attr), dim=0)
-
+      
+对于图中的任意一条特定边（无论它是真实的化学键还是虚拟的自环），分别计算其三种离散属性对应的独立嵌入向量，然后将这三个同维度的向量相加，压缩成一个统一的 edge_embeddings 向量。这个最终向量综合代表了该边（或自环）的完整物理属性，随后被送入 propagate 参与消息传递。
         edge_embeddings = self.edge_embedding1(edge_attr[:,0]) + \
                           self.edge_embedding2(edge_attr[:,1]) + \
                           self.edge_embedding3(edge_attr[:,2])

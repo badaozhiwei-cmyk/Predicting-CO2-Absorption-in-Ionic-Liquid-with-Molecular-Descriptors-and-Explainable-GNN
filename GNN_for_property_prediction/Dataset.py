@@ -52,9 +52,7 @@ args = {
     'bi_direction':True
 }
 
-这里开发者手动把阴离子和阳离子合成了一个 Data 对象。
-在 __getitem__ 层面，它返回的是一个“包含阴阳离子的单一图”。
-这意味着对模型来说，一个样本 = 一个图（这个图里有两个不连通的小图）。
+
 def combine_Graph(Graph_list):
     """
     merge a Graph with multiple subgraph
@@ -75,7 +73,7 @@ def combine_Graph(Graph_list):
 
 
 
-这个虚节点就像一个“班长”，它能同时收集阴离子和阳离子的信息。在 GNN 传播时，信息可以从阳离子 -> 虚节点 -> 阴离子流动，解决了阴阳离子互不连通导致信息无法交换的问题。
+
 def add_global(graph):
     """
     add a global point, all the attribute are set to zero

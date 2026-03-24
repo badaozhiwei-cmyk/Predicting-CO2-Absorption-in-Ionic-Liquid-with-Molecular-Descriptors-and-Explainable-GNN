@@ -1,3 +1,5 @@
+Dataset.py 生成了包含节点特征（x）、边索引（edge_index）和全局节点的大型图（Combine_Graph）。
+
 1. 原始阶段：CSV 数据
 输入：data/smiles.csv（包含阳离子 SMILES、阴离子 SMILES、温度 T、压力 P、CO2 溶解度）。
 形态：此时数据是化学字符串和数值

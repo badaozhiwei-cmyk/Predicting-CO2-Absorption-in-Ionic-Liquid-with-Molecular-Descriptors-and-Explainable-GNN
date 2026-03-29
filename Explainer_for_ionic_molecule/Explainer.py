@@ -67,6 +67,8 @@ class IL_Explainer(torch.nn.Module):
         self.return_type = return_type
         self.log = log
 
+
+#初始化节点和边特征掩码
     def __set_masks__(self, x, edge_index, init="normal"):
         (N, F), E = x.size(), edge_index.size(1)
 

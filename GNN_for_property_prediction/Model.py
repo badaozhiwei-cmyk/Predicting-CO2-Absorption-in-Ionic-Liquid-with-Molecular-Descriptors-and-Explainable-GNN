@@ -48,11 +48,11 @@ class IL_Net_GCN(torch.nn.Module):
     def extract(self,x,batch):
 batch 是一维张量，记录了每个节点属于哪个图（例：[0, 0, 0, 1, 1, 2, 2, 2, 2]）。
 torch.unique 统计出 batch 中每个独立图的节点总数，存入 count（例：图0有3个节点，图1有2个节点，图2有4个节点，count 为 [3, 2, 4]）。  
-        
+输入 [0, 0, 0, 1, 1, 2, 2, 2, 2]输出 output=[0, 1, 2], count=[3, 2, 4].        
         output, count= torch.unique(batch, return_counts=True)
         count = count.tolist()
-累加计算终止索引（for i in count: 循环）
-l 列表用于存储大图中每个独立图的切片终止位置。
+
+输入列表 [3, 2, 4]
 根据上述例子，循环结束后 l 的值为 [3, 5, 9]。这意味着图0的节点索引范围是 0~2，图1是 3~4，图2是 5~8。
         l = []
         cur = 0
@@ -151,6 +151,7 @@ class IL_GAT(torch.nn.Module):
             l.append(cur)
         re = []
         for j in l:
+            #切片索引引发降维
             re.append(x[j - 1].reshape(1,-1))
 
         g = torch.cat(re,dim = 0).to('cuda')
